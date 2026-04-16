@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Note API - Minimalist</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffffff;
+            color: #1a1a1a;
+        }
+        .editor-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        textarea {
+            resize: none;
+            border: none;
+            outline: none;
+            background: transparent;
+        }
+        .line-numbers {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #f9fafb;
+            color: #9ca3af;
+            user-select: none;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            transition: background-color 0.3s ease;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="h-16 border-b border-gray-100 flex items-center justify-between px-6 shrink-0">
+        <div class="flex items-center gap-6">
+            <div class="flex items-center gap-2">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+                <input id="noteTitle" type="text" placeholder="Tiêu đề..." class="font-medium text-gray-800 placeholder-gray-300 outline-none w-48 md:w-80">
+            </div>
+            <div class="hidden md:flex items-center gap-2 text-[11px] font-semibold text-gray-400 tracking-wider">
+                <div id="saveDot" class="status-dot bg-green-400"></div>
+                <span id="statusText">ĐÃ LƯU</span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button onclick="copyLink()" class="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-lg text-xs font-medium hover:bg-gray-800 transition-all active:scale-95 shadow-sm">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+                CHIA SẺ
+            </button>
+            <button onclick="createNew()" class="p-2 text-gray-400 hover:text-black transition-colors" title="Mới">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Content -->
+    <main class="flex-1 flex overflow-hidden">
+        <!-- Line Numbers -->
+        <div id="lineNumbers" class="line-numbers w-12 pt-6 text-[12px] text-center border-r border-gray-100">
+            1
+        </div>
+
+        <!-- Editor -->
+        <textarea id="editor" spellcheck="false" class="editor-font flex-1 p-6 text-[14px] text-gray-700 leading-relaxed placeholder-gray-200 overflow-y-auto" placeholder="// Bắt đầu viết..."></textarea>
+    </main>
+
+    <!-- Footer -->
+    <footer class="h-10 border-t border-gray-100 flex items-center justify-between px-6 text-[11px] text-gray-400 font-medium">
+        <div class="flex items-center gap-6">
+            <span id="charCount">0 ký tự</span>
+            <span id="lineCount">1 dòng</span>
+        </div>
+        <div class="flex items-center gap-4">
+            <span id="noteIdDisplay" class="text-gray-300">BẢN NHÁP</span>
+            <span class="text-black font-bold uppercase tracking-tighter">NoteAPI v2</span>
+        </div>
+    </footer>
+
+    <!-- Firebase Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Cấu hình Firebase
+        const firebaseConfig = {
+            apiKey: "AIza...",
+            authDomain: "your-app.firebaseapp.com",
+            projectId: "your-app",
+            storageBucket: "your-app.appspot.com",
+            messagingSenderId: "...",
+            appId: "..."
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        
+        const editor = document.getElementById('editor');
+        const titleInput = document.getElementById('noteTitle');
+        const saveDot = document.getElementById('saveDot');
+        const statusText = document.getElementById('statusText');
+        const charCount = document.getElementById('charCount');
+        const lineCount = document.getElementById('lineCount');
+        
+        let timer;
+        let currentId = window.location.hash.replace('#', '');
+
+        // Load Note
+        async function loadNote() {
+            if(!currentId) return;
+            statusText.innerText = "ĐANG TẢI...";
+            saveDot.className = "status-dot bg-blue-400";
+            
+            try {
+                const docRef = doc(db, "notes", currentId);
+                const snap = await getDoc(docRef);
+                if(snap.exists()){
+                    editor.value = snap.data().content;
+                    titleInput.value = snap.data().title;
+                    document.getElementById('noteIdDisplay').innerText = "ID: " + currentId;
+                    updateUI();
+                }
+            } catch (e) { console.error(e); }
+            
+            statusText.innerText = "ĐÃ ĐỒNG BỘ";
+            saveDot.className = "status-dot bg-green-400";
+        }
+
+        // Auto Save logic
+        editor.addEventListener('input', () => {
+            statusText.innerText = "ĐANG THAY ĐỔI";
+            saveDot.className = "status-dot bg-yellow-400";
+            updateUI();
+            clearTimeout(timer);
+            timer = setTimeout(saveNote, 1000);
+        });
+
+        titleInput.addEventListener('input', () => {
+            clearTimeout(timer);
+            timer = setTimeout(saveNote, 1000);
+        });
+
+        async function saveNote() {
+            if(!editor.value.trim()) return;
+            const id = currentId || Math.random().toString(36).substring(2, 10);
+            try {
+                await setDoc(doc(db, "notes", id), {
+                    content: editor.value,
+                    title: titleInput.value || "Không tiêu đề",
+                    updatedAt: Date.now()
+                });
+                if(!currentId) {
+                    currentId = id;
+                    window.location.hash = id;
+                    document.getElementById('noteIdDisplay').innerText = "ID: " + id;
+                }
+                statusText.innerText = "ĐÃ LƯU";
+                saveDot.className = "status-dot bg-green-400";
+            } catch (e) { 
+                statusText.innerText = "LỖI KẾT NỐI";
+                saveDot.className = "status-dot bg-red-400";
+            }
+        }
+
+        function updateUI() {
+            const content = editor.value;
+            const lines = content.split('\n').length;
+            charCount.innerText = content.length + " ký tự";
+            lineCount.innerText = lines + " dòng";
+            document.getElementById('lineNumbers').innerHTML = Array.from({length: lines}, (_, i) => i + 1).join('<br>');
+        }
+
+        window.createNew = () => {
+            if(editor.value.trim() && confirm("Tạo ghi chú mới?")) {
+                window.location.hash = '';
+                location.reload();
+            }
+        };
+
+        window.copyLink = () => {
+            if(!currentId) {
+                alert("Vui lòng nhập nội dung để lưu trước khi chia sẻ.");
+                return;
+            }
+            navigator.clipboard.writeText(window.location.href);
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "ĐÃ CHÉP!";
+            setTimeout(() => btn.innerHTML = originalText, 2000);
+        };
+
+        window.onload = loadNote;
+    </script>
+</body>
+</html>
